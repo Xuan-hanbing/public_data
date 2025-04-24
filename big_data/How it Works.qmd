@@ -1,0 +1,220 @@
+---
+title: How it Works
+author: yourname
+output: html_document
+---
+
+## Data 
+The analysis utilizes two main types of satellite data from Google Earth Engine:
+
+1. **Temperature Data**
+   - Source: MODIS MOD11A2 dataset
+   - Temporal resolution: 8-day composite
+   - Spatial resolution: 1km
+   - Time period: February 18, 2011 - March 30, 2025
+   - Variables:
+     - Daytime Land Surface Temperature (LST_Day_1km)
+     - Nighttime Land Surface Temperature (LST_Night_1km)
+   - Data processing: Raw values are converted to Celsius by multiplying by 0.02 and subtracting 273.15
+
+2. **Terrain Data**
+   - Elevation data:
+     - USGS/SRTMGL1_003 dataset
+     - NASA/NASADEM_HGT/001 dataset
+   - Spatial resolution: 30m
+   - Derived terrain products:
+     - Slope (identifying steep areas >20 degrees)
+     - Aspect (terrain orientation)
+     - Elevation profiles for climbing routes
+
+3. **Study Area**
+   - Center point: Mount Everest (86.9252°E, 27.98833°N)
+   - Analysis buffer: 10-15km radius
+   - Includes multiple climbing routes
+
+## Methodology
+The analysis combines temperature and terrain data to understand the environmental conditions around Mount Everest. The methodology consists of three main components:
+
+1. **Temperature Analysis**
+   - Temperature Unit Conversion:
+     - Raw MODIS LST data is in Kelvin (K)
+     - Conversion formula: Celsius = (Kelvin × 0.02) - 273.15
+     - Scale factor (0.02) accounts for MODIS data scaling
+     - 273.15 converts from Kelvin to Celsius
+   - Time Series Analysis:
+     - Utilizes ee.Reducer.mean() for spatial aggregation
+     - Reducer computes mean temperature within specified region
+     - Handles missing data through reducer's null handling
+     - Preserves temporal information using system:time_start
+   - Statistical Analysis:
+     - Temporal aggregation using imageCollection.mean()
+     - Spatial statistics using ee.Reducer statistics
+     - Point-based analysis for specific locations
+
+2. **Terrain Analysis**
+   - Elevation Processing:
+     - Digital Elevation Model (DEM) processing using ee.Terrain products
+     - Slope calculation using ee.Terrain.slope()
+     - Aspect calculation using ee.Terrain.aspect()
+   - Route Analysis:
+     - Feature collection processing using ee.FeatureCollection
+     - Route geometry intersection using geometry.intersection()
+     - Elevation Profile Generation:
+       - 100-point sampling along route geometry
+       - Uniform point distribution using numPixels parameter
+       - 30-meter resolution sampling (scale parameter)
+       - Profile data stored as feature properties
+       - Interactive visualization of elevation changes
+   - Terrain Classification:
+     - Slope masking using updateMask() for steep areas (>20 degrees)
+     - Aspect classification using 8-direction color coding
+     - Terrain product generation using ee.Terrain.products()
+
+3. **Interactive Analysis**
+   - User Interface:
+     - Custom UI panel implementation using ui.Panel
+     - Interactive point selection using Map.onClick()
+     - Route selection using ui.Select dropdown
+   - Dynamic Visualization:
+     - Real-time chart updates using ui.Chart
+     - Layer management using Map.addLayer() and Map.remove()
+     - Legend updates using custom ui.Panel
+   - Data Interaction:
+     - Point-based temperature analysis
+     - Route-based elevation profiling
+     - Dynamic layer toggling
+
+## how it works
+The application is built using Google Earth Engine's JavaScript API. Here are the key components and their implementation:
+
+1. **Data Initialization and Setup**
+This section establishes the foundation for the analysis by setting up the study area and loading the required datasets. It includes:
+- Setting the map center and zoom level
+- Defining the area of interest (AOI) with a buffer
+- Initializing the time range for analysis
+- Loading the MODIS temperature dataset
+
+```js
+// Basic settings
+Map.setCenter(86.9252, 27.98833, 11);
+var aoi = ee.Geometry.Point(86.9252, 27.98833).buffer(10000);
+
+// Input source
+var modis = ee.ImageCollection('MODIS/MOD11A2');
+var start = ee.Date('2011-02-18');
+var end = ee.Date('2025-03-30');
+var dateRange = ee.DateRange(start, end);
+```
+
+2. **Temperature Analysis Pipeline**
+This section handles the temperature data processing and visualization. The process involves:
+- Filtering temperature data by date and region
+- Converting temperature values from Kelvin to Celsius
+- Creating time series visualizations
+- Implementing interactive temperature analysis
+
+```js
+// Step 1: Temperature data filtering
+var modLSTday = modis.filterDate(dateRange).select('LST_Day_1km');
+var modLSTnight = modis.filterDate(dateRange).select('LST_Night_1km');
+
+// Step 2: Temperature conversion (Kelvin to Celsius)
+var modLSTday_c = modLSTday.map(function(img) {
+  return img.multiply(0.02).subtract(273.15);
+});
+
+// Step 3: Temperature time series visualization
+var tsDay = ui.Chart.image.series({
+    imageCollection: modLSTday_c,
+    region: selectedPoint,
+    reducer: ee.Reducer.mean(),
+    scale: 1000,
+    xProperty: 'system:time_start'
+}).setOptions({
+    title: 'Average LST Day Time Series',
+    vAxis: {title: 'LST (°C)'}
+});
+
+// Step 4: Add temperature visualization layer
+Map.addLayer(clippedLSTday_c, {
+    min: -30, max: 30,
+    palette: ['blue', 'limegreen', 'yellow', 'darkorange', 'red']
+}, 'Mean Day Temperature');
+```
+
+3. **Terrain Analysis Pipeline**
+This section handles the terrain data processing and visualization. The process involves:
+- Generating terrain products (slope and aspect)
+- Processing route data and elevation profiles
+- Creating terrain visualizations
+- Implementing route selection and analysis
+
+```js
+// Step 1: Terrain analysis
+var slope = ee.Terrain.slope(dem);
+var aspect = ee.Terrain.aspect(dem);
+var slopeMask = slope.updateMask(slope.gt(20));
+
+// Step 2: Route elevation profiling
+var calculateElevationProfile = function(route) {
+    var geometry = route.geometry();
+    var elevationProfile = elevation.sample({
+        region: geometry,
+        numPixels: 100,  // Number of sampling points
+        scale: 30        // Resolution in meters
+    });
+    return route.set('elevationProfile', elevationProfile);
+};
+
+// Step 3: Add terrain visualization layers
+Map.addLayer(slopeMask, {
+    min: 20, max: 90,
+    palette: ['lightgreen', 'yellow', 'orange', 'red']
+}, 'Steep Slopes');
+
+// Step 4: Implement route selection interface
+var routeSelect = ui.Select({
+    items: routeNames,
+    onChange: function(name) {
+        var selectedRoute = routesWithElevation
+            .filter(ee.Filter.eq('NAME', name))
+            .first();
+        updateElevationChart(selectedRoute);
+    }
+});
+```
+
+4. **Interactive Interface Setup**
+This section creates the user interface components that enable interactive data exploration. It includes:
+- Setting up the main control panel
+- Creating interactive controls
+- Implementing data visualization tools
+- Managing user interactions
+
+```js
+// Step 1: Create main control panel
+var panel = ui.Panel({
+  layout: ui.Panel.Layout.flow('vertical'),
+  style: {
+    width: '600px',
+    height: '400px',
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    padding: '2px',
+    border: '1px solid black',
+    position: 'top-right'
+  }
+});
+
+// Step 2: Create and add legend
+function addLegend() {
+    var legend = ui.Panel({
+        layout: ui.Panel.Layout.flow('vertical'),
+        style: {
+            position: 'bottom-right',
+            padding: '8px',
+            backgroundColor: 'rgba(255, 255, 255, 0.8)'
+        }
+    });
+    // ... legend implementation ...
+}
+```
